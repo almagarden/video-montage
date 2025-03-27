@@ -1,19 +1,22 @@
 # Video Montage API
 
-A FastAPI-based service that creates video montages from multiple videos with background music. The service arranges videos in a grid layout and adds background music to create a seamless montage.
+A FastAPI service that creates video montages by combining multiple videos sequentially with background music. Each video plays in full screen, maintaining consistent dimensions throughout the montage.
 
 ## Features
 
-- Create video montages with multiple videos in a dynamic grid layout
-- Background music support with automatic duration matching
-- Smart video duration handling:
-  - If total duration is shorter than requested, the last video is looped
-  - If total duration is longer than requested, videos are proportionally trimmed
-- Automatic grid layout calculation based on number of videos
-- API key authentication with user management
-- Rate limiting and quota management
-- Progress tracking for video generation tasks
-- High-quality output (1080p resolution)
+- **Sequential Video Playback**: Videos play one after another in full screen
+- **Consistent Dimensions**: All videos are automatically resized to match the first video's dimensions
+- **Smart Duration Control**:
+  - When target duration is shorter than total video length: All videos are proportionally shortened
+  - When target duration is longer than total video length: The last video loops to fill remaining time
+- **Background Music**: Add background audio track that automatically:
+  - Loops if shorter than the video duration
+  - Trims if longer than the video duration
+- **API Security**:
+  - API key authentication
+  - Rate limiting (5 requests/minute)
+  - Monthly quota system
+- **Progress Tracking**: Monitor video generation progress in real-time
 
 ## Prerequisites
 
@@ -24,7 +27,7 @@ A FastAPI-based service that creates video montages from multiple videos with ba
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/yourusername/video-montage.git
 cd video-montage
 ```
 
@@ -32,181 +35,181 @@ cd video-montage
 ```bash
 cp .env.example .env
 ```
-Edit the `.env` file and set your desired configuration values:
-```env
-DATABASE_URL=postgresql://postgres:postgres@db:5432/video_montage
-STORAGE_DIR=/app/storage
-API_V1_STR=/api/v1
-SECRET_KEY=your-secret-key-here
-RATE_LIMIT_PER_MINUTE=5
-```
 
-3. Build and start the services:
+3. Build and start services:
 ```bash
-docker-compose up -d --build
+docker-compose up -d
 ```
 
 4. Initialize the database:
 ```bash
-docker-compose exec app ./scripts/init_db.sh
+docker-compose exec app python init_db.py
 ```
 
 ## API Usage
 
 ### Authentication
 
-1. Create a new user and get an API key:
-```bash
-curl -X POST "http://localhost:8000/api/v1/auth/users" \
-     -H "Content-Type: application/json" \
-     -d '{"email": "user@example.com", "monthly_quota": 100}'
+All endpoints require an API key as a query parameter:
+```
+?api_key=your_api_key_here
 ```
 
-Response:
+### Generate Video Montage
+
+**Endpoint**: `POST /api/video-generation/generate`
+
+**Request**:
+```bash
+curl -X POST "http://localhost:8000/api/video-generation/generate?api_key=YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "background_url": "https://example.com/background.mp3",
+    "media_list": [
+      "https://example.com/video1.mp4",
+      "https://example.com/video2.mp4"
+    ],
+    "duration": 60
+  }'
+```
+
+**Parameters**:
+- `background_url` (required): URL to the background audio file (MP3)
+- `media_list` (required): Array of video URLs (MP4)
+- `duration` (optional): Target duration in seconds
+
+**Response**:
 ```json
 {
-  "id": "user-id",
-  "email": "user@example.com",
-  "api_key": "your-api-key",
-  "monthly_quota": 100
+  "id": "task_id",
+  "status": "pending",
+  "progress": 0.0
 }
 ```
 
-2. Generate a video montage:
+### Check Progress
+
+**Endpoint**: `GET /api/video-generation/progress/{task_id}`
+
+**Request**:
 ```bash
-curl -X POST "http://localhost:8000/api/v1/video-generation/generate" \
-     -H "Content-Type: application/json" \
-     -H "api-key: YOUR_API_KEY" \
-     -d '{
-       "type": "LoopVideo",
-       "data": {
-         "background_url": "https://example.com/background.mp3",
-         "media_list": [
-           "https://example.com/video1.mp4",
-           "https://example.com/video2.mp4",
-           "https://example.com/video3.mp4"
-         ],
-         "duration": 30
-       }
-     }'
+curl "http://localhost:8000/api/video-generation/progress/task_id?api_key=YOUR_API_KEY"
 ```
 
-Response:
+**Response**:
 ```json
 {
-  "success": true,
-  "message": "Video generation started",
-  "data": {
-    "id": "task-id"
-  }
+  "id": "task_id",
+  "status": "done",
+  "progress": 1.0,
+  "output_url": "/storage/videos/output_task_id.mp4"
 }
 ```
 
-3. Check task progress:
-```bash
-curl "http://localhost:8000/api/v1/video-generation/progress/TASK_ID" \
-     -H "api-key: YOUR_API_KEY"
-```
+**Status Values**:
+- `pending`: Task is queued
+- `processing`: Video is being generated
+- `done`: Video is ready
+- `error`: Generation failed
 
-Response:
-```json
-{
-  "success": true,
-  "message": "Task status retrieved",
-  "data": {
-    "status": "processing",
-    "progress": 0.5,
-    "url": null,
-    "error": null
-  }
-}
-```
+## Video Generation Details
 
-### Video Generation Details
+### Video Processing
 
-The service handles video montage creation with the following logic:
+1. **Dimension Handling**:
+   - First video's dimensions become the template
+   - Subsequent videos are processed to match:
+     - If video is wider: Fit to height and crop width
+     - If video is taller: Fit to width and crop height
 
-1. **Video Layout**:
-   - Videos are arranged in a grid layout (2x2, 3x3, etc.)
-   - Grid size automatically adjusts based on number of videos
-   - All videos are resized to maintain consistent quality
-   - Output resolution is 1080p (1920x1080)
-
-2. **Duration Handling**:
-   - If no duration specified: uses total length of all videos
-   - If duration specified:
-     - Shorter than total: last video is looped to fill remaining time
-     - Longer than total: videos are proportionally trimmed
+2. **Duration Control**:
+   ```
+   Example: 3 videos of 10s, 15s, and 20s (total 45s)
+   
+   Case 1: Target duration = 30s
+   - Each video shortened proportionally (×0.67)
+   - Result: 6.7s, 10s, 13.3s
+   
+   Case 2: Target duration = 60s
+   - Play all videos (45s)
+   - Loop last video for remaining time (15s)
+   ```
 
 3. **Audio Handling**:
-   - Original video audio is removed
-   - Background music (from background_url) is added
-   - Music is looped or trimmed to match video duration
-
-4. **Output Format**:
-   - Video: H.264 codec (MP4)
-   - Audio: AAC codec
-   - Frame rate: 24 FPS
-
-## Rate Limits
-
-- 5 requests per minute per user
-- Configurable monthly quota per user (default: 100)
-- Rate limits are enforced per API key
+   ```
+   Example: Background audio is 40s, video is 60s
+   - Audio loops once to reach 80s
+   - Trims to match 60s
+   
+   Example: Background audio is 90s, video is 60s
+   - Audio trimmed to 60s
+   ```
 
 ## Error Handling
 
-The API returns appropriate HTTP status codes:
-
-- 200: Successful operation
+### HTTP Status Codes
+- 200: Success
 - 400: Invalid request data
-- 401: Missing or invalid API key
-- 403: Unauthorized access or quota exceeded
-- 404: Resource not found
+- 401: Missing/invalid API key
+- 403: Unauthorized access
 - 429: Rate limit exceeded
 - 500: Internal server error
 
-## Development
-
-To run the application in development mode:
-
-```bash
-docker-compose up --build
+### Common Error Scenarios
+```json
+{
+  "status": "error",
+  "error_message": "Failed to download video: https://example.com/video1.mp4"
+}
 ```
 
-The API documentation will be available at:
+## Development
+
+Run in development mode:
+```bash
+docker-compose -f docker-compose.dev.yml up
+```
+
+API Documentation:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
 ## Testing
 
-The project includes comprehensive tests for all components. To run the tests:
-
+Run all tests:
 ```bash
-# Run all tests with coverage report
-docker-compose run test
+docker-compose run --rm test pytest
+```
 
-# Run specific test file
-docker-compose run test pytest tests/test_auth.py -v
+Run specific test file:
+```bash
+docker-compose run --rm test pytest tests/test_video_service.py -v
+```
 
-# Run tests with specific marker
-docker-compose run test pytest -v -m "auth"
+Generate coverage report:
+```bash
+docker-compose run --rm test pytest --cov=app --cov-report=html
 ```
 
 ### Test Coverage
 
-The test suite covers:
-- API endpoints and request validation
-- Authentication and rate limiting
-- Video generation service
-- Database operations
-- Error handling and edge cases
+The test suite includes:
+1. **Video Processing Tests**:
+   - Sequential arrangement
+   - Aspect ratio matching
+   - Duration control
+   - Audio handling
 
-To view the test coverage report:
-```bash
-docker-compose run test pytest --cov=app --cov-report=html
-```
-The coverage report will be generated in the `htmlcov` directory.
+2. **API Tests**:
+   - Input validation
+   - Authentication
+   - Progress tracking
+   - Error handling
+
+3. **Integration Tests**:
+   - End-to-end video generation
+   - File handling
+   - Database operations
 
 ## License
 

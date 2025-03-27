@@ -1,7 +1,7 @@
 import os
 import uuid
 from typing import List, Optional
-from moviepy.editor import VideoFileClip, CompositeVideoClip, clips_array, AudioFileClip
+from moviepy.editor import VideoFileClip, CompositeVideoClip, clips_array, AudioFileClip, concatenate_videoclips
 from moviepy.video.fx.resize import resize
 from sqlalchemy.orm import Session
 from app.models.video_task import VideoTask
@@ -11,6 +11,8 @@ from app.core.config import settings
 class VideoGenerationService:
     def __init__(self, db: Session):
         self.db = db
+        self.storage_path = "storage/videos"
+        os.makedirs(self.storage_path, exist_ok=True)
 
     def create_task(self, user_id: str, background_url: str, media_list: List[str], duration: Optional[int] = None) -> VideoTask:
         """Create a new video generation task"""
@@ -51,14 +53,14 @@ class VideoGenerationService:
             self.update_task_progress(task_id, 0.1, "processing")
 
             # Download background audio
-            audio_path = download_file(task.background_url, task_id)
+            audio_path = download_file(task.background_url, self.storage_path)
             if not audio_path:
                 raise Exception("Failed to download background audio")
 
             # Download media files
             media_paths = []
             for url in task.media_list:
-                path = download_file(url, task_id)
+                path = download_file(url, self.storage_path)
                 if path:
                     media_paths.append(path)
 
@@ -71,86 +73,112 @@ class VideoGenerationService:
             background_audio = AudioFileClip(audio_path)
             
             # Load and process media clips
-            media_clips = []
+            video_clips = []
             total_duration = 0
             
-            for path in media_paths[:-1]:  # Process all clips except the last one
+            for path in media_paths:
                 clip = VideoFileClip(path).without_audio()  # Remove original audio
                 total_duration += clip.duration
-                media_clips.append(clip)
+                video_clips.append(clip)
             
-            # Handle the last clip specially for duration requirements
-            last_clip = VideoFileClip(media_paths[-1]).without_audio()
-            
-            if task.duration:
-                remaining_duration = task.duration - total_duration
-                if remaining_duration > 0:
-                    # Need to loop the last clip
-                    loops_needed = int(remaining_duration / last_clip.duration) + 1
-                    last_clip = last_clip.loop(n=loops_needed)
-                    last_clip = last_clip.subclip(0, remaining_duration)
-                else:
-                    # Need to cut all clips proportionally
-                    scale_factor = task.duration / (total_duration + last_clip.duration)
-                    media_clips = [clip.subclip(0, clip.duration * scale_factor) for clip in media_clips]
-                    last_clip = last_clip.subclip(0, last_clip.duration * scale_factor)
-            
-            media_clips.append(last_clip)
-            final_duration = task.duration or (total_duration + last_clip.duration)
+            # Handle duration
+            target_duration = task.duration if task.duration else total_duration
+            total_original_duration = total_duration
+
+            if target_duration < total_original_duration:
+                # If target duration is shorter, adjust clip durations proportionally
+                scale_factor = target_duration / total_original_duration
+                video_clips = [clip.subclip(0, clip.duration * scale_factor) for clip in video_clips]
+            elif target_duration > total_original_duration:
+                # If target duration is longer, loop the last clip
+                remaining_duration = target_duration - total_original_duration
+                last_clip = video_clips[-1]
+                loops_needed = int(remaining_duration / last_clip.duration)
+                remainder = remaining_duration % last_clip.duration
+                
+                # Add full loops
+                for _ in range(loops_needed):
+                    video_clips.append(last_clip)
+                
+                # Add partial loop if needed
+                if remainder > 0:
+                    video_clips.append(last_clip.subclip(0, remainder))
 
             self.update_task_progress(task_id, 0.5)
 
-            # Calculate grid layout
-            n_clips = len(media_clips)
-            grid_size = 2  # 2x2 grid
-            while grid_size * grid_size < n_clips:
-                grid_size += 1
-
-            # Resize clips to fit grid
-            target_size = (1920 // grid_size, 1080 // grid_size)  # Assuming 1080p output
-            resized_clips = [resize(clip, target_size) for clip in media_clips]
-
-            # Pad with None if needed
-            while len(resized_clips) < grid_size * grid_size:
-                resized_clips.append(None)
-
-            # Create grid layout
-            grid = []
-            for i in range(0, len(resized_clips), grid_size):
-                row = resized_clips[i:i + grid_size]
-                grid.append(row)
-
-            self.update_task_progress(task_id, 0.7)
-
-            # Create composite video
-            grid_clip = clips_array(grid)
+            # Get the aspect ratio from the first video
+            if not video_clips:
+                raise Exception("No valid video clips provided")
             
-            # Trim or loop background audio to match video duration
-            if background_audio.duration < final_duration:
-                background_audio = background_audio.loop(duration=final_duration)
+            base_width, base_height = video_clips[0].size
+            aspect_ratio = base_width / base_height
+
+            # Resize all subsequent clips to match the first video's dimensions
+            for i in range(1, len(video_clips)):
+                clip = video_clips[i]
+                current_ratio = clip.size[0] / clip.size[1]
+                
+                if current_ratio > aspect_ratio:
+                    # Video is wider than target ratio, fit to height
+                    new_width = int(base_height * current_ratio)
+                    resized = clip.resize(height=base_height)
+                    # Crop to match target width
+                    x_center = resized.size[0] // 2
+                    video_clips[i] = resized.crop(
+                        x1=x_center - (base_width // 2),
+                        y1=0,
+                        x2=x_center + (base_width // 2),
+                        y2=base_height
+                    )
+                else:
+                    # Video is taller than target ratio, fit to width
+                    new_height = int(base_width / current_ratio)
+                    resized = clip.resize(width=base_width)
+                    # Crop to match target height
+                    y_center = resized.size[1] // 2
+                    video_clips[i] = resized.crop(
+                        x1=0,
+                        y1=y_center - (base_height // 2),
+                        x2=base_width,
+                        y2=y_center + (base_height // 2)
+                    )
+
+            # Concatenate all clips
+            final_video = concatenate_videoclips(video_clips)
+
+            # Prepare audio
+            if background_audio.duration < final_video.duration:
+                # Loop audio if needed
+                background_audio = background_audio.loop(duration=final_video.duration)
             else:
-                background_audio = background_audio.subclip(0, final_duration)
+                # Trim audio if needed
+                background_audio = background_audio.subclip(0, final_video.duration)
 
-            # Create final composite with background audio
-            final_clip = CompositeVideoClip([grid_clip]).set_audio(background_audio)
+            # Set audio to final video
+            final_video = final_video.set_audio(background_audio)
 
-            # Generate output path
-            output_path = os.path.join(settings.STORAGE_DIR, task_id, "output.mp4")
-            final_clip.write_videofile(output_path, 
-                                     codec='libx264', 
-                                     audio_codec='aac',
-                                     threads=4,
-                                     fps=24)
+            # Save the final video
+            output_path = os.path.join(self.storage_path, f"output_{task_id}.mp4")
+            final_video.write_videofile(
+                output_path,
+                codec='libx264',
+                audio_codec='aac',
+                temp_audiofile=os.path.join(self.storage_path, f"temp_audio_{task_id}.m4a"),
+                remove_temp=True
+            )
+
+            # Update task with output URL
+            task.output_url = f"/storage/videos/output_{task_id}.mp4"
+            task.status = "done"
+            task.progress = 1.0
+            self.db.commit()
 
             # Clean up clips
             background_audio.close()
-            for clip in media_clips:
+            for clip in video_clips:
                 if clip:
                     clip.close()
-
-            # Update task as completed
-            output_url = f"/storage/{task_id}/output.mp4"
-            self.update_task_progress(task_id, 1.0, "done", output_url=output_url)
+            final_video.close()
 
         except Exception as e:
             self.update_task_progress(task_id, 0, "error", error=str(e))
