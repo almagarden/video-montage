@@ -1,7 +1,7 @@
 import os
 import uuid
 from typing import List, Optional
-from moviepy.editor import VideoFileClip, CompositeVideoClip, clips_array
+from moviepy.editor import VideoFileClip, CompositeVideoClip, clips_array, AudioFileClip
 from moviepy.video.fx.resize import resize
 from sqlalchemy.orm import Session
 from app.models.video_task import VideoTask
@@ -18,7 +18,7 @@ class VideoGenerationService:
             id=str(uuid.uuid4()),
             user_id=user_id,
             status="pending",
-            background_url=background_url,
+            background_url=background_url,  # Now used for audio track
             media_list=media_list,
             duration=duration
         )
@@ -42,7 +42,7 @@ class VideoGenerationService:
             self.db.refresh(task)
 
     async def generate_video(self, task_id: str):
-        """Generate video montage"""
+        """Generate video montage with background audio"""
         try:
             task = self.db.query(VideoTask).filter(VideoTask.id == task_id).first()
             if not task:
@@ -50,10 +50,10 @@ class VideoGenerationService:
 
             self.update_task_progress(task_id, 0.1, "processing")
 
-            # Download background video
-            background_path = download_file(task.background_url, task_id)
-            if not background_path:
-                raise Exception("Failed to download background video")
+            # Download background audio
+            audio_path = download_file(task.background_url, task_id)
+            if not audio_path:
+                raise Exception("Failed to download background audio")
 
             # Download media files
             media_paths = []
@@ -67,22 +67,36 @@ class VideoGenerationService:
 
             self.update_task_progress(task_id, 0.3)
 
-            # Load background video
-            background_clip = VideoFileClip(background_path)
+            # Load background audio
+            background_audio = AudioFileClip(audio_path)
             
-            # Calculate final duration
-            duration = task.duration or background_clip.duration
-
             # Load and process media clips
             media_clips = []
-            for path in media_paths:
-                clip = VideoFileClip(path)
-                # Loop the clip if needed
-                if clip.duration < duration:
-                    clip = clip.loop(duration=duration)
-                else:
-                    clip = clip.subclip(0, duration)
+            total_duration = 0
+            
+            for path in media_paths[:-1]:  # Process all clips except the last one
+                clip = VideoFileClip(path).without_audio()  # Remove original audio
+                total_duration += clip.duration
                 media_clips.append(clip)
+            
+            # Handle the last clip specially for duration requirements
+            last_clip = VideoFileClip(media_paths[-1]).without_audio()
+            
+            if task.duration:
+                remaining_duration = task.duration - total_duration
+                if remaining_duration > 0:
+                    # Need to loop the last clip
+                    loops_needed = int(remaining_duration / last_clip.duration) + 1
+                    last_clip = last_clip.loop(n=loops_needed)
+                    last_clip = last_clip.subclip(0, remaining_duration)
+                else:
+                    # Need to cut all clips proportionally
+                    scale_factor = task.duration / (total_duration + last_clip.duration)
+                    media_clips = [clip.subclip(0, clip.duration * scale_factor) for clip in media_clips]
+                    last_clip = last_clip.subclip(0, last_clip.duration * scale_factor)
+            
+            media_clips.append(last_clip)
+            final_duration = task.duration or (total_duration + last_clip.duration)
 
             self.update_task_progress(task_id, 0.5)
 
@@ -93,7 +107,7 @@ class VideoGenerationService:
                 grid_size += 1
 
             # Resize clips to fit grid
-            target_size = (background_clip.size[0] // grid_size, background_clip.size[1] // grid_size)
+            target_size = (1920 // grid_size, 1080 // grid_size)  # Assuming 1080p output
             resized_clips = [resize(clip, target_size) for clip in media_clips]
 
             # Pad with None if needed
@@ -110,7 +124,15 @@ class VideoGenerationService:
 
             # Create composite video
             grid_clip = clips_array(grid)
-            final_clip = CompositeVideoClip([background_clip, grid_clip])
+            
+            # Trim or loop background audio to match video duration
+            if background_audio.duration < final_duration:
+                background_audio = background_audio.loop(duration=final_duration)
+            else:
+                background_audio = background_audio.subclip(0, final_duration)
+
+            # Create final composite with background audio
+            final_clip = CompositeVideoClip([grid_clip]).set_audio(background_audio)
 
             # Generate output path
             output_path = os.path.join(settings.STORAGE_DIR, task_id, "output.mp4")
@@ -121,7 +143,7 @@ class VideoGenerationService:
                                      fps=24)
 
             # Clean up clips
-            background_clip.close()
+            background_audio.close()
             for clip in media_clips:
                 if clip:
                     clip.close()
