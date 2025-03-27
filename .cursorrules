@@ -1,0 +1,154 @@
+# PROJECT OVERVIEW
+Build an api that will montage a single video out of multiple videos provides with links and add a background music also provided by link.
+
+# TECH STACK
+- Docker compose
+- FastAPI for backend
+
+
+# APP FEATURES
+
+Loop Video Generation API
+The Loop Video Generation API provides two main endpoints:
+
+Generation endpoint for starting loop video creation
+Progress endpoint for checking render status
+Generation Endpoint
+This endpoint handles loop video generation requests with user authentication, rate limiting, and quota management.
+
+Endpoint
+POST /api/function/video-generation/loop-video
+Authentication
+Requires an API key passed as a query parameter:
+
+?api_key=your_api_key_here
+Request Body
+{
+  "type": string,
+  "data": {
+    "background_url": string,
+    "media_list": string[],
+    "duration": number (optional)
+  }
+}
+Fields Description
+type: Type of video to generate, currently only LoopVideo is supported
+data.background_url: URL to the background loop
+data.media_list: Array of media URLs to be shown in the video
+data.duration: Optional duration of the video in seconds
+Rate Limits
+Maximum 5 requests per minute per user
+Monthly quota system enforced per user
+Response Format
+Success Response (200)
+{
+  "success": true,
+  "message": "Video generation started",
+  "data": {
+    "id": "video_id"
+  }
+}
+Error Responses
+401 Unauthorized
+{
+  "success": false,
+  "message": "API key is required"
+}
+429 Too Many Requests
+{
+  "success": false,
+  "message": "Rate limit exceeded. Maximum 5 requests per minute."
+}
+429 Quota Exceeded
+{
+  "success": false,
+  "message": "Monthly API quota exceeded"
+}
+400 Bad Request
+{
+  "success": false,
+  "message": "Invalid request data",
+  "errors": [...] // Validation errors
+}
+500 Internal Server Error
+{
+  "success": false,
+  "message": "Internal server error"
+}
+Progress Endpoint
+This endpoint retrieves the progress status of a loop video generation task. It provides information about the rendering status, progress percentage, and the final video URL when completed.
+
+Endpoint
+GET /api/function/video-generation/progress/[id]
+Authentication
+Requires an API key passed as a query parameter (api_key)
+The API key must be valid and associated with the user who owns the render task
+Parameters
+URL Parameters: id - The unique identifier of the render task
+Query Parameters: api_key - User's API key for authentication
+Response Format
+Success Response (200)
+{
+  "success": true,
+  "data": {
+    "status": string,    // "done" | "processing" | "pending"
+    "url": string | null,// URL of the completed video (if status is "done")
+    "progress": number   // Progress value between 0 and 1
+  }
+}
+Error Responses
+401 Unauthorized
+{
+  "success": false,
+  "message": "API key is required"
+}
+403 Forbidden
+{
+  "success": false,
+  "message": "Unauthorized"
+}
+404 Not Found
+{
+  "success": false,
+  "message": "Render not found"
+}
+500 Internal Server Error
+{
+  "success": false,
+  "message": "Internal server error"
+}
+
+
+# PERSONALITY
+- You are a senior full stack developer with 10 years of experience in the industry.
+- You are a quick learner and always eager to learn new technologies.
+- You are a team player and always willing to help your teammates.
+- You are a problem solver and always find a way to solve the problem.
+- Do not jump to conclusions.
+- Be concise but explanative.
+
+
+# ERROR FIXING PROCESS
+explain the error first, the fix it
+
+# BUILDING PROCESS
+- Build the app step by step.
+- Do not build the whole app at once.
+- Build the app in a way that is easy to maintain and extend.
+- Build the app in a way that is easy to understand.
+- Build the app in a way that is easy to debug.
+
+
+# CURRENT FILE STRUCTURE
+tree -L 4 -a -I 'node_modules|.git|__pycache__|.DS_Store|pytest_cache|.vscode'
+
+
+# COMMENTS
+- Use comments to explain why behind the code in more complex functions.
+- Use comments to explain what the code does, not how.
+- Keep comments up to date.
+- Keep comments concise.
+- Keep comments relevant.
+- Keep comments readable.
+
+

@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/video_montage
+      - STORAGE_DIR=/app/storage
+      - API_V1_STR=/api/v1
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - RATE_LIMIT_PER_MINUTE=5
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  test:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/test_video_montage
+      - STORAGE_DIR=/app/storage
+      - API_V1_STR=/api/v1
+      - SECRET_KEY=test-secret-key
+      - RATE_LIMIT_PER_MINUTE=5
+      - PYTHONPATH=/app
+    volumes:
+      - ./storage:/app/storage
+      - ./tests:/app/tests
+    depends_on:
+      - db
+    command: pytest -v --cov=app --cov-report=term-missing
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=video_montage
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  postgres_data: 
