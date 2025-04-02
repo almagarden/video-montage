@@ -6,6 +6,7 @@ from fastapi import HTTPException, Depends
 from app.models.user import User
 from app.db.base import get_db
 from app.core.config import settings
+import uuid
 
 class AuthService:
     def __init__(self, db: Session):
@@ -20,14 +21,32 @@ class AuthService:
         return self.db.query(User).filter(User.api_key == api_key).first()
 
     def create_user(self, email: str, monthly_quota: int = 100) -> User:
-        """Create a new user with API key"""
-        api_key = self.generate_api_key()
+        """
+        Create a new user with API key
+        """
         user = User(
-            id=secrets.token_urlsafe(16),
+            id=str(uuid.uuid4()),
             email=email,
-            api_key=api_key,
+            api_key=str(uuid.uuid4()),
             monthly_quota=monthly_quota
         )
+        
+        self.db.add(user)
+        self.db.commit()
+        self.db.refresh(user)
+        
+        return user
+
+    def get_user_by_email(self, email: str) -> User:
+        """
+        Get user by email
+        """
+        return self.db.query(User).filter(User.email == email).first()
+
+    def update_user(self, user: User) -> User:
+        """
+        Update user in database
+        """
         self.db.add(user)
         self.db.commit()
         self.db.refresh(user)

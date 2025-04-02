@@ -12,4 +12,5 @@ requests==2.31.0
 python-dotenv==1.0.1
 pytest==8.0.0
 httpx==0.26.0
-psycopg2-binary==2.9.9  # PostgreSQL adapter 
+psycopg2-binary==2.9.9  # PostgreSQL adapter
+email-validator==2.1.0  # Required for Pydantic email validation 

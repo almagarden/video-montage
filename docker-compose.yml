@@ -14,7 +14,8 @@ services:
     volumes:
       - ./storage:/app/storage
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   test:
@@ -39,10 +40,18 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=video_montage
+      - POSTGRES_MULTIPLE_DATABASES=test_video_montage
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -d video_montage -c '\\q'"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
 volumes:

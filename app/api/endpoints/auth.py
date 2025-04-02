@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-from app.db.base import get_db
+from app.db.session import get_db
 from app.services.auth import AuthService
+from app.core.auth import get_api_key
+from app.models.user import User
 from typing import Optional
+import uuid
 
 router = APIRouter()
 
@@ -49,7 +52,7 @@ async def create_user(
 async def regenerate_api_key(
     user_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_api_key)
 ):
     """
     Regenerate API key for a user
@@ -61,7 +64,7 @@ async def regenerate_api_key(
         )
     
     auth_service = AuthService(db)
-    current_user.api_key = auth_service.generate_api_key()
+    current_user.api_key = str(uuid.uuid4())  # Simple API key generation
     db.commit()
     db.refresh(current_user)
     

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Video Montage API"
     
     # Security
-    SECRET_KEY: str = "your-secret-key-here"  # Change in production
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
@@ -15,10 +15,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 5
     
     # Database
-    DATABASE_URL: str = "sqlite:///./video_montage.db"
+    DATABASE_URL: str
     
     # Storage
-    STORAGE_DIR: str = "./storage"
+    STORAGE_DIR: str = "/app/storage"
     
     class Config:
         env_file = ".env"
